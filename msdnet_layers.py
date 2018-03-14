@@ -185,13 +185,13 @@ class Transition(nn.Module):
             nn.Conv2d(in_channels, out_channels,
                       kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
+            nn.AvgPool2d(2,stride=2)
         )
 
         return scale
 
     def forward(self,x):
-        print self.scales_module
         output = []
         start_scale = self.input_scale_nums - self.output_scale_nums
         for s in range(start_scale,self.output_scale_nums+1):
@@ -240,19 +240,43 @@ class CifarClassifier(nn.Module):
         x = self.classifier(x)
         return x
 
+class MSDNet(nn.Module):
+    def __init__(self,in_channels=3,out_channels=6,layer_nums_list=[4,3],grow_rate_list=[6,12],scale_nums_list=[3,2]):
+        super(MSDNet,self).__init__()
+        self.msdfirst_layer = MSDFirstLayer(in_channels,out_channels,scale_nums_list[0])
 
-from torch import autograd
-import torch
+        current_channels = out_channels
+        self.msd_block1 = MSDLayers_block(in_channels=current_channels,out_channels=current_channels,
+                                            layer_nums=layer_nums_list[0],scale_nums=scale_nums_list[0],grow_rate=grow_rate_list[0]).msdlayers_block
+
+        current_channels = current_channels + grow_rate_list[0] * layer_nums_list[0]
+        self.msd_transition = Transition(input_feature_nums=current_channels,output_feature_nums=out_channels,input_scale_nums=scale_nums_list[0],output_scale_nums=scale_nums_list[1])
+
+        current_channels = out_channels * 2
+        self.msd_block2 = MSDLayers_block(in_channels=current_channels,out_channels=current_channels,
+                                            layer_nums=layer_nums_list[1],scale_nums=scale_nums_list[1],grow_rate=grow_rate_list[1]).msdlayers_block
+
+        current_channels = out_channels * 4 + grow_rate_list[1] * layer_nums_list[1] * 2 #the third scales's output channels
+
+        self.msd_cls_final = CifarClassifier(current_channels,10)
+        print self.msd_cls_final
+
+    def forward(self,x):
+
+        out_layer1 = self.msdfirst_layer(x)
+
+        out_block1 = self.msd_block1(out_layer1)
+
+        out_trans1 = self.msd_transition(out_block1)
+
+        out_block2 = self.msd_block2(out_trans1)
+
+        print out_block2
+        out = self.msd_cls_final(out_block2[-1])
+
+        return out
+
 if __name__ == '__main__':
-	input = autograd.Variable(torch.rand(1,3,32,32))
-	msdfirst_layer = MSDFirstLayer(3,6,3)
-	out_layer1 = msdfirst_layer(input)
-
-	msd_block1 = MSDLayers_block(in_channels=6,out_channels=6,layer_nums=4,scale_nums=3,grow_rate=6)
-	out_block1 = msd_block1.msdlayers_block(out_layer1)
-
-	msd_transition = Transition(30,6,3,2)
-	out_trans1 = msd_transition(out_block1)
-
-	msd_block2 = MSDLayers_block(in_channels=12,out_channels=12,layer_nums=4,scale_nums=2,grow_rate=12)
-	out_block2 = msd_block2.msdlayers_block(out_trans1)
+    input = autograd.Variable(torch.rand(1,3,64,64))
+    module = MSDNet()
+    module(input)   
